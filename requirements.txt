@@ -1,0 +1,38 @@
+# =============================================================================
+# PII Classification Agent - Requirements
+# =============================================================================
+# Install: pip install -r requirements.txt
+# =============================================================================
+
+# Core
+click>=8.1.0
+pyyaml>=6.0
+requests>=2.28.0
+tqdm>=4.64.0
+jinja2>=3.1.0
+
+# Kafka
+confluent-kafka>=2.3.0
+jsonschema>=4.17.0
+genson>=1.2.2
+
+# -----------------------------------------------------------------------------
+# LLM Detection via Ollama (Default - no Python deps, just install Ollama)
+# -----------------------------------------------------------------------------
+# Install Ollama: curl -fsSL https://ollama.com/install.sh | sh
+# Pull model:     ollama pull llama3.2
+# Start server:   ollama serve
+
+# -----------------------------------------------------------------------------
+# Optional: Presidio NER (uncomment for regex + NLP detection)
+# -----------------------------------------------------------------------------
+# presidio-analyzer>=2.2.33
+# spacy>=3.6.0
+# After install: python -m spacy download en_core_web_lg
+
+# -----------------------------------------------------------------------------
+# Optional: Cloud Providers (uncomment if needed)
+# -----------------------------------------------------------------------------
+# boto3>=1.28.0                    # AWS Comprehend
+# google-cloud-dlp>=3.12.0         # GCP DLP  
+# azure-ai-textanalytics>=5.3.0    # Azure Text Analytics

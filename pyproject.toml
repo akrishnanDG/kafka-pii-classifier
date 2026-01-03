@@ -1,0 +1,88 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pii-classifier"
+version = "1.0.0"
+description = "Automatically detect and classify PII in Kafka topics"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.9"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+    "Topic :: System :: Systems Administration",
+]
+keywords = ["pii", "kafka", "data-classification", "privacy", "gdpr", "schema-registry"]
+dependencies = [
+    "click>=8.0.0",
+    "confluent-kafka>=2.0.0",
+    "pyyaml>=6.0",
+    "requests>=2.28.0",
+    "tqdm>=4.64.0",
+]
+
+[project.optional-dependencies]
+presidio = [
+    "presidio-analyzer>=2.2.0",
+    "spacy>=3.6.0",
+]
+aws = [
+    "boto3>=1.26.0",
+]
+gcp = [
+    "google-cloud-dlp>=3.12.0",
+]
+azure = [
+    "azure-ai-textanalytics>=5.3.0",
+]
+all = [
+    "pii-classifier[presidio,aws,gcp,azure]",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "black>=23.0.0",
+    "flake8>=6.0.0",
+    "mypy>=1.0.0",
+]
+
+[project.scripts]
+pii-classifier = "src.main:main"
+
+[project.urls]
+Homepage = "https://github.com/your-username/pii-classifier"
+Documentation = "https://github.com/your-username/pii-classifier#readme"
+Repository = "https://github.com/your-username/pii-classifier"
+Issues = "https://github.com/your-username/pii-classifier/issues"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["src*"]
+
+[tool.black]
+line-length = 100
+target-version = ['py39', 'py310', 'py311']
+include = '\.pyi?$'
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+addopts = "-v --tb=short"
+
+[tool.mypy]
+python_version = "3.9"
+warn_return_any = true
+warn_unused_configs = true
+ignore_missing_imports = true
+

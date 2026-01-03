@@ -1,0 +1,166 @@
+kafka:
+  bootstrap_servers: "localhost:9092"
+  security_protocol: "PLAINTEXT"  # or SASL_SSL, SSL
+  sasl_mechanism: "PLAIN"  # if using SASL
+  sasl_username: ""
+  sasl_password: ""
+  group_id: "pii-classification-agent"
+  # Performance optimizations (optional, for faster processing)
+  # fetch_min_bytes: 1024  # Wait for at least 1KB before returning
+  # fetch_max_wait_ms: 100  # Max wait time (100ms)
+  # max_poll_records: 500  # Process up to 500 records per poll
+  
+schema_registry:
+  url: "http://localhost:8081"
+  api_key: ""
+  api_secret: ""
+
+sampling:
+  strategy: "percentage"  # or "count", "time_based"
+  sample_percentage: 5  # 5% of messages
+  max_samples_per_partition: 1000
+  min_samples_per_partition: 10
+  sample_time_window: "1h"  # for time-based sampling
+  # Performance optimizations
+  use_skip_based_sampling: true  # Read every Nth message instead of all
+  early_termination: true  # Stop when target samples reached
+  max_partitions_per_topic: null  # Max partitions to scan per topic (null = all partitions)
+                                  # If set, stops after finding samples in this many partitions
+                                  # Example: 10 means scan up to 10 partitions, stop if samples found in 10
+
+# Performance: Parallel processing configuration
+# parallel_workers: 20  # Number of parallel workers for topics (default: 10)
+# max_parallel_partitions: 30  # Max parallel partitions per topic (default: 20)
+
+topics:
+  # If empty, scan all topics
+  # Otherwise specify list:
+  # - "topic1"
+  # - "topic2"
+  # Or use patterns:
+  include_patterns: []
+  exclude_patterns: []
+
+pii_detection:
+  # Default: Pattern + LLM Agent (local LLM via Ollama)
+  # - Pattern: Fast regex for obvious PII (emails, SSNs, credit cards)
+  # - LLM Agent: Schema-level analysis (1 call per topic, catches context-aware PII)
+  providers:
+    - "pattern"
+    - "llm_agent"
+  
+  # Alternative options:
+  # 
+  # Pattern only (no LLM, fastest):
+  # providers:
+  #   - "pattern"
+  #
+  # Pattern + Presidio (requires: pip install presidio-analyzer spacy):
+  # providers:
+  #   - "pattern"
+  #   - "presidio"
+  #
+  # Pattern + Cloud provider:
+  # providers:
+  #   - "pattern"
+  #   - "aws"      # or "gcp", "azure"
+  
+  # Provider-specific configurations
+  providers_config:
+    # AWS Comprehend configuration
+    aws:
+      region_name: "us-east-1"  # AWS region
+      # aws_access_key_id: "${AWS_ACCESS_KEY_ID}"  # Optional, can use IAM role
+      # aws_secret_access_key: "${AWS_SECRET_ACCESS_KEY}"  # Optional, can use IAM role
+      language_code: "en"
+    
+    # GCP DLP configuration
+    gcp:
+      project_id: "${GCP_PROJECT_ID}"  # Required
+      # credentials_path: "/path/to/service-account.json"  # Optional, can use default credentials
+      location: "global"  # or specific region like "us-central1"
+    
+    # Azure Text Analytics configuration
+    azure:
+      endpoint: "${AZURE_ENDPOINT}"  # Required, e.g., "https://your-resource.cognitiveservices.azure.com/"
+      api_key: "${AZURE_API_KEY}"    # Required
+      language: "en"
+    
+    # Presidio configuration (if needed)
+    presidio:
+      # Presidio uses default settings, but you can add custom config here
+    
+    # LLM Agent configuration (uses Ollama - RECOMMENDED for local LLM)
+    # Analyzes schema once per topic instead of each field value (100x more efficient)
+    llm_agent:
+      base_url: "http://localhost:11434"  # Ollama API endpoint
+      model: "llama3.2"  # Model to use (llama3.2, mistral, gemma2)
+      timeout: 60  # Timeout for schema analysis
+  
+  enabled_types:
+    - "SSN"
+    - "ADDRESS"
+    - "PHONE_NUMBER"
+    - "EMAIL"
+    - "CREDIT_CARD"
+    - "PASSPORT"
+    - "DRIVER_LICENSE"
+    - "IP_ADDRESS"
+    - "NAME"
+    # Additional PII types (optional - uncomment to enable)
+    # - "BANK_ACCOUNT"
+    # - "IBAN"
+    # - "SWIFT_CODE"
+    # - "AWS_ACCESS_KEY"
+    # - "AWS_SECRET_KEY"
+    # - "ITIN"
+    # - "NATIONAL_INSURANCE_NUMBER"
+    # - "USERNAME"
+    # - "PASSWORD"
+    # - "MAC_ADDRESS"
+  confidence_threshold: 0.6
+  require_multiple_detections: true  # Require PII in multiple samples
+  min_detection_rate: 0.3  # 30% of samples must contain PII
+  
+tagging:
+  enabled: false  # Set to true to actually update schemas
+  tag_format: "metadata"  # or "description", "custom_property", "tags_api"
+  dual_tagging: true  # Apply both general "PII" and specific "PII-{TYPE}" tags
+  tag_naming: "PII-{TYPE}"  # Format for specific tags (e.g., "PII-Email", "PII-SSN")
+  create_backup: true
+  create_schemas_for_schemaless: false  # Create schemas for schemaless topics
+
+schemaless_data:
+  enabled: true  # Process schemaless JSON topics
+  schema_inference:
+    min_samples_for_inference: 10
+    max_nesting_depth: 10
+    handle_arrays: "aggregate"  # or "individual", "ignore"
+  field_extraction:
+    flatten_nested: false  # Use dot notation for nested fields
+    include_arrays: true
+  use_field_name_hints: true  # Use field names as PII hints
+
+reporting:
+  output_format: ["html", "json"]
+  output_directory: "./reports"
+  include_visualizations: true
+  include_samples: false  # Include actual sample data in report
+
+# Streaming mode configuration (for real-time PII detection)
+streaming:
+  enabled: false  # Enable streaming mode
+  offset_reset: "latest"  # "latest" (new messages only) or "earliest" (all messages)
+  offset_storage_path: "./streaming_offsets.json"  # Optional: Path to store offsets
+  commit_interval: 100  # Commit offsets every N messages
+  poll_timeout: 1.0  # Polling timeout in seconds
+
+# Integration settings
+integration:
+  # REST API for external system integration
+  api:
+    enabled: false  # Set to true to enable API server
+    host: "0.0.0.0"
+    port: 8000
+    debug: false
+
