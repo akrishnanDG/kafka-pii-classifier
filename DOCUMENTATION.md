@@ -263,7 +263,7 @@ pii-classifier -c config/config.yaml --all-topics
 
 **Analyze specific topics:**
 ```bash
-pii-classifier -c config/config.yaml --topics topic1 topic2
+pii-classifier -c config/config.yaml -t topic1 -t topic2
 ```
 
 **Dry run (no tagging):**
@@ -276,21 +276,26 @@ pii-classifier -c config/config.yaml --all-topics --dry-run
 pii-classifier -c config/config.yaml --all-topics --enable-tagging
 ```
 
-**Note:** If you haven't installed the CLI command, use `pii-classifier` instead of `pii-classifier`.
+**Note:** If not installed as CLI, use `python -m src.main` instead of `pii-classifier`.
 
 ### Command Line Options
 
 | Option | Description | Example |
 |--------|-------------|---------|
+| `--version, -V` | Show version and exit | `--version` |
 | `--config, -c` | Configuration file path | `-c config/config.yaml` |
-| `--topics, -t` | Topics to analyze | `--topics topic1 topic2` |
+| `--topics, -t` | Topics to analyze (repeatable) | `-t topic1 -t topic2` |
 | `--all-topics` | Analyze all topics | `--all-topics` |
 | `--sample-percentage` | Override sample percentage | `--sample-percentage 10` |
 | `--enable-tagging` | Enable schema tagging | `--enable-tagging` |
 | `--dry-run` | Run without tagging | `--dry-run` |
+| `--output, -o` | Output directory for reports | `-o ./reports` |
 | `--log-level` | Log level (DEBUG, INFO, WARNING, ERROR) | `--log-level DEBUG` |
 | `--api-server` | Start API server mode | `--api-server` |
+| `--api-host` | API server host (default: 0.0.0.0) | `--api-host localhost` |
+| `--api-port` | API server port (default: 8000) | `--api-port 8080` |
 | `--monitor` | Continuous monitoring mode | `--monitor` |
+| `--monitor-interval` | Monitoring interval in seconds | `--monitor-interval 3600` |
 | `--streaming` | Streaming mode (real-time) | `--streaming` |
 | `--offset-reset` | Offset reset for streaming | `--offset-reset latest` |
 | `--offset-storage` | Path to store offsets | `--offset-storage ./offsets.json` |
@@ -328,7 +333,7 @@ pii-classifier -c config/config.yaml --streaming --offset-storage ./offsets.json
 pii-classifier -c config/config.yaml --streaming --offset-reset earliest
 ```
 
-**Note:** If you haven't installed the CLI command, use `pii-classifier` instead of `pii-classifier`.
+**Note:** If not installed as CLI, use `python -m src.main` instead of `pii-classifier`.
 
 ---
 
@@ -929,8 +934,6 @@ streaming:
 | Schema Tagging | ✅ Real-time (optional) | ✅ After analysis |
 | Resource Usage | Low | High |
 
-📖 **See [STREAMING_MODE_IMPLEMENTATION.md](STREAMING_MODE_IMPLEMENTATION.md) for detailed documentation**
-
 ---
 
 ## API Server
@@ -1084,9 +1087,8 @@ print(f"Detections: {result}")
 ## Additional Resources
 
 - **README.md** - Project overview and quick start guide
-- **STREAMING_MODE_IMPLEMENTATION.md** - Streaming mode implementation and usage guide
-- **PII_DETECTION_TECHNICAL_GUIDE.md** - Technical guide: PII detection research, principles, industry solutions, and scalability
 - **config/config.yaml.example** - Complete configuration template
+- **src/integration/README.md** - REST API integration guide
 
 ---
 
