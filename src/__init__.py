@@ -1,8 +1,8 @@
 """
-Auto Data Classification Agent
+Kafka PII Classifier
 
-An AI-powered agent for PII classification in Kafka Schema Registry.
+Detect and classify PII in Kafka topics using local LLM.
 """
 
-__version__ = "0.1.0"
+from .__version__ import __version__
 

@@ -64,14 +64,19 @@ class OllamaDetector(PIIDetectorBase):
         
         Args:
             config: Configuration dictionary with:
-                - base_url: Ollama API URL (default: http://localhost:11434)
-                - model: Model name (default: llama3.2)
+                - base_url: Ollama API URL (required, e.g., http://localhost:11434)
+                - model: Model name (required, e.g., llama3.2)
                 - timeout: Request timeout in seconds (default: 30)
                 - temperature: Model temperature (default: 0.1)
         """
         self.config = config or {}
-        self.base_url = self.config.get('base_url', 'http://localhost:11434')
-        self.model = self.config.get('model', 'llama3.2')
+        self.base_url = self.config.get('base_url')
+        self.model = self.config.get('model')
+        
+        if not self.base_url:
+            raise ValueError("ollama requires 'base_url' in config (e.g., http://localhost:11434)")
+        if not self.model:
+            raise ValueError("ollama requires 'model' in config (e.g., llama3.2)")
         self.timeout = self.config.get('timeout', 30)
         self.temperature = self.config.get('temperature', 0.1)
         self._available = None
