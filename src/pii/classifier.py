@@ -61,29 +61,33 @@ class FieldClassifier:
         
         # Aggregate all detections and collect sample values
         all_detections = []
-        sample_values_set = set()  # Use set to track unique values
-        
+        samples_with_detections = 0
+        sample_values_set = set()
+
         for sample_detections in detections:
             all_detections.extend(sample_detections)
-            # Collect sample values from detections (limit to unique values, max 10)
+            if sample_detections:
+                samples_with_detections += 1
             for detection in sample_detections:
                 if detection.value and len(sample_values_set) < 10:
                     sample_values_set.add(detection.value)
-        
+
         if not all_detections:
             return None
-        
+
         # Count detections by type
         type_counts = defaultdict(int)
         type_confidences = defaultdict(list)
-        
+
         for detection in all_detections:
             type_counts[detection.pii_type] += 1
             type_confidences[detection.pii_type].append(detection.confidence)
-        
-        # Calculate statistics
-        detection_count = len(all_detections)
-        detection_rate = detection_count / total_samples if total_samples > 0 else 0.0
+
+        # Detection rate = fraction of samples that had at least one detection.
+        # Multiple detectors may contribute separate entries for the same sample,
+        # so cap at 1.0 to avoid rates > 100%.
+        detection_count = samples_with_detections
+        detection_rate = min(1.0, samples_with_detections / total_samples) if total_samples > 0 else 0.0
         
         # Filter by thresholds
         if self.require_multiple_detections and detection_count < 2:

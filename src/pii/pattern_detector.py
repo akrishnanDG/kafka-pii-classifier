@@ -130,13 +130,14 @@ class PatternDetector(PIIDetectorBase):
         value_clean = value.strip()
         
         # Check each pattern
+        detected_types = set()
         for pii_type, pattern in self.patterns.items():
             match = pattern.search(value_clean)
             if match:
                 confidence = self._calculate_confidence(
                     pii_type, value_clean, match.group(), field_name
                 )
-                
+
                 # Only add detection if confidence > 0 (0 confidence means filtered out by field name context)
                 if confidence > 0:
                     detections.append(PIIDetection(
@@ -146,8 +147,71 @@ class PatternDetector(PIIDetectorBase):
                         pattern_matched=match.group(),
                         field_name=field_name
                     ))
-        
+                    detected_types.add(pii_type)
+
+        # Field-name-based detection: if the field name strongly indicates PII
+        # but no regex matched for that type, create a detection from the
+        # field name hint alone. This catches single-word names (first_name,
+        # last_name) and unstructured addresses (home_address) that regex
+        # cannot match.
+        if field_name:
+            field_hints = self._detect_from_field_name(
+                field_name, value_clean, detected_types
+            )
+            detections.extend(field_hints)
+
         return detections
+
+    # Field name indicators and their PII types
+    _FIELD_NAME_INDICATORS = {
+        PIIType.NAME: [
+            'first_name', 'firstname', 'last_name', 'lastname',
+            'full_name', 'fullname', 'person_name', 'customer_name',
+            'cardholder_name', 'account_name', 'user_name', 'driver_name',
+            'passenger_name', 'employee_name', 'contact_name',
+        ],
+        PIIType.ADDRESS: [
+            'address', 'home_address', 'street_address', 'mailing_address',
+            'billing_address', 'shipping_address', 'residential_address',
+        ],
+    }
+
+    def _detect_from_field_name(
+        self,
+        field_name: str,
+        value: str,
+        already_detected: set
+    ) -> List[PIIDetection]:
+        """Detect PII based on field name when regex didn't match.
+
+        Only fires for NAME and ADDRESS types where regex coverage is weak
+        (single-word names, unstructured addresses).
+        """
+        hints = []
+        field_lower = field_name.lower().replace('-', '_')
+
+        for pii_type, indicators in self._FIELD_NAME_INDICATORS.items():
+            if pii_type in already_detected:
+                continue
+            if any(ind in field_lower for ind in indicators):
+                # Basic validation: not empty, not purely numeric
+                if len(value) < 2 or value.isdigit():
+                    continue
+                # For NAME: at least one letter
+                if pii_type == PIIType.NAME and not any(c.isalpha() for c in value):
+                    continue
+                # For ADDRESS: at least 5 chars
+                if pii_type == PIIType.ADDRESS and len(value) < 5:
+                    continue
+
+                hints.append(PIIDetection(
+                    pii_type=pii_type,
+                    confidence=0.85,
+                    value=value,
+                    pattern_matched=f"field_name_hint:{field_name}",
+                    field_name=field_name,
+                ))
+        return hints
     
     def _calculate_confidence(
         self,
