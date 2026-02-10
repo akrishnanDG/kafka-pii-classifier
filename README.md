@@ -33,41 +33,87 @@ Automatically detect and classify PII (Personally Identifiable Information) in K
 | NATIONAL_INSURANCE_NUMBER | High | USERNAME | Low |
 | PASSWORD | High | MAC_ADDRESS | Low |
 
-## Quick Start
+## Prerequisites
 
-### 1. Install
+- Python 3.9+
+- Docker (for local Kafka/Schema Registry, or connect to an existing cluster)
+- Access to a Kafka cluster and Schema Registry
+
+## Setup
+
+### Step 1: Clone and install
 
 ```bash
+git clone https://github.com/akrishnanDG/kafka-pii-classifier.git
+cd kafka-pii-classifier
 pip install -e .
 ```
 
-Optional providers:
-```bash
-# Presidio NLP detection (pattern + NLP)
-pip install presidio-analyzer spacy
-python -m spacy download en_core_web_lg
+### Step 2: Start Kafka and Schema Registry
 
-# Ollama LLM detection (schema-level analysis)
-curl -fsSL https://ollama.com/install.sh | sh
-ollama pull llama3.2
-ollama serve  # keep running in a separate terminal
+**Option A: Local (Docker)**
+
+A `docker-compose.yml` is included. This starts Kafka on port 19092 and Schema Registry on port 18081:
+
+```bash
+docker compose up -d kafka schema-registry
 ```
 
-### 2. Configure
+Wait for services to be ready:
+```bash
+# Check Schema Registry is up
+curl http://localhost:18081/subjects
+```
 
-Create a configuration file at `config/config.yaml`:
+**Option B: Existing cluster**
 
-**Minimal config (local Kafka):**
+Skip this step if you already have a Kafka cluster and Schema Registry (e.g., Confluent Cloud, AWS MSK).
+
+### Step 3: Create configuration
+
+```bash
+mkdir -p config
+```
+
+Create `config/config.yaml`:
+
+**For local Docker setup:**
 ```yaml
 kafka:
-  bootstrap_servers: "localhost:9092"
+  bootstrap_servers: "localhost:19092"
   security_protocol: "PLAINTEXT"
 
 schema_registry:
-  url: "http://localhost:8081"
+  url: "http://localhost:18081"
+
+pii_detection:
+  providers:
+    - "pattern"
+  enabled_types:
+    - "SSN"
+    - "EMAIL"
+    - "PHONE_NUMBER"
+    - "CREDIT_CARD"
+    - "IP_ADDRESS"
+    - "NAME"
+    - "DATE_OF_BIRTH"
+    - "ADDRESS"
+    - "PASSPORT"
+    - "DRIVER_LICENSE"
+
+sampling:
+  strategy: "percentage"
+  sample_percentage: 10
+
+tagging:
+  enabled: false
+
+reporting:
+  output_format: ["json", "html"]
+  output_directory: "./reports"
 ```
 
-**Confluent Cloud config:**
+**For Confluent Cloud:**
 ```yaml
 kafka:
   bootstrap_servers: "pkc-xxxxx.region.confluent.cloud:9092"
@@ -84,7 +130,7 @@ schema_registry:
 
 Environment variables (`${VAR}`) are automatically substituted. Use `${?VAR}` for optional variables.
 
-### 3. Run
+### Step 4: Run
 
 ```bash
 # Show help
@@ -99,9 +145,24 @@ pii-classifier -c config/config.yaml -t topic1 -t topic2
 # Analyze and tag schemas with PII annotations
 pii-classifier -c config/config.yaml --all-topics --enable-tagging
 
-# Custom sampling rate (percentage of messages to sample)
+# Custom sampling rate
 pii-classifier -c config/config.yaml --all-topics --sample-percentage 10
 ```
+
+### Step 5 (optional): Install additional providers
+
+```bash
+# Presidio NLP detection (local, pattern + NLP)
+pip install presidio-analyzer spacy
+python -m spacy download en_core_web_lg
+
+# Ollama LLM detection (local, schema-level analysis)
+curl -fsSL https://ollama.com/install.sh | sh
+ollama pull llama3.2
+ollama serve  # keep running in a separate terminal
+```
+
+Cloud LLM providers (OpenAI, Anthropic, Gemini) need only an API key in config — no extra packages required. See [Configuration](#pii-detection-providers) below.
 
 ## Usage Examples
 
@@ -374,7 +435,7 @@ PII sample values are automatically masked in reports to prevent data leakage.
 ## Testing
 
 ```bash
-# Unit tests (169 tests)
+# Unit tests (214 tests)
 pytest tests/ -m "not integration"
 
 # Integration tests (requires running Kafka + Schema Registry)
