@@ -80,7 +80,8 @@ Ollama runs LLMs locally - no data is sent to external services. Recommended mod
 
 ### Configuration File Structure
 
-The configuration file (`config/config.yaml`) controls all aspects of the agent:
+Create a configuration file (e.g., `config/config.yaml`) to control all aspects of the agent.
+See the example below:
 
 ```yaml
 kafka:
@@ -140,10 +141,14 @@ pii_detection:
 
 tagging:
   enabled: false  # Set to true to update schemas
-  tag_format: "metadata"  # or "description", "custom_property", "tags_api"
+  tag_format: "metadata"  # or "description"
   dual_tagging: true
   tag_naming: "PII-{TYPE}"
   create_backup: true
+  # NOTE: Schema tagging is not yet fully implemented.
+  # When enabled, PII fields will be detected and logged but
+  # Schema Registry metadata will NOT be updated.
+  # See schema_registry/tagger.py for implementation status.
 
 schemaless_data:
   enabled: true
@@ -166,7 +171,7 @@ max_parallel_partitions: 30
 integration:
   api:
     enabled: false
-    host: "0.0.0.0"
+    host: "127.0.0.1"
     port: 8000
     debug: false
 ```
@@ -286,7 +291,7 @@ pii-classifier -c config/config.yaml --all-topics --enable-tagging
 | `--config, -c` | Configuration file path | `-c config/config.yaml` |
 | `--topics, -t` | Topics to analyze (repeatable) | `-t topic1 -t topic2` |
 | `--all-topics` | Analyze all topics | `--all-topics` |
-| `--sample-percentage` | Override sample percentage | `--sample-percentage 10` |
+| `--sample-percentage` | Override sample percentage (0-100) | `--sample-percentage 10` |
 | `--enable-tagging` | Enable schema tagging | `--enable-tagging` |
 | `--dry-run` | Run without tagging | `--dry-run` |
 | `--output, -o` | Output directory for reports | `-o ./reports` |
@@ -734,7 +739,7 @@ Instead of checking each field value individually (slow), the LLM agent:
 **1. Increase Parallel Workers:**
 ```yaml
 parallel_workers: 20  # Default: 10
-max_parallel_partitions: 30  # Default: 20
+max_parallel_partitions: 30  # Default: 30
 ```
 
 **2. Enable Skip-Based Sampling:**
@@ -830,7 +835,14 @@ pii-classifier -c config/config.yaml --api-server --api-host 0.0.0.0 --api-port 
 
 **API Endpoints:**
 - `GET /health` - Health check
-- `POST /api/v1/classify` - Trigger classification
+- `POST /api/v1/classify` - Classify specific topic(s)
+- `POST /api/v1/classify/all` - Classify all topics
+- `GET /api/v1/status` - Agent status
+- `GET /api/v1/config` - View configuration (sensitive values masked)
+
+**Authentication:** Set `integration.api.api_key` in config or the
+`PII_CLASSIFIER_API_KEY` environment variable. Pass the key via the
+`X-API-Key` header.
 
 **Example Request:**
 ```bash
@@ -1087,9 +1099,9 @@ print(f"Detections: {result}")
 ## Additional Resources
 
 - **README.md** - Project overview and quick start guide
-- **config/config.yaml.example** - Complete configuration template
+- **DOCUMENTATION.md** - Complete configuration reference
 - **src/integration/README.md** - REST API integration guide
 
 ---
 
-**Last Updated:** November 2025
+**Last Updated:** February 2026

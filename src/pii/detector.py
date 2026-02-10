@@ -1,6 +1,7 @@
 """Main PII detection orchestrator."""
 
 import logging
+import re
 from typing import Dict, List, Optional, Any
 from .types import PIIDetection, PIIType
 from .factory import PIIDetectorFactory
@@ -27,9 +28,14 @@ class PIIDetector:
                 - use_pattern: Whether to use pattern detector (default: True)
         """
         self.config = config
-        self.enabled_types = set(
-            PIIType[pt] for pt in config.get('enabled_types', [])
-        )
+        enabled_list = config.get('enabled_types', [])
+        self.enabled_types = set(PIIType[pt] for pt in enabled_list)
+        if not self.enabled_types:
+            logger.warning(
+                "No PII types enabled in 'enabled_types' config. "
+                "All detections will be filtered out. Add types like "
+                "['SSN', 'EMAIL', 'PHONE_NUMBER'] to enabled_types."
+            )
         
         # Initialize detectors based on configuration
         self.detectors = []
@@ -231,7 +237,6 @@ class PIIDetector:
                 value_str = str(value).strip()
                 # Check if it's a numeric timestamp (10-13 digits, possibly with decimal)
                 # Unix timestamps: 10 digits (seconds) or 13 digits (milliseconds)
-                import re
                 # Match pure numeric (10-13 digits) or numeric with decimal (e.g., 1762340928.947)
                 if re.match(r'^\d{10,13}(\.\d+)?$', value_str):
                     # This is a Unix timestamp, not a phone number

@@ -72,9 +72,10 @@ class OllamaDetector(PIIDetectorBase):
         self.config = config or {}
         self.base_url = self.config.get('base_url')
         self.model = self.config.get('model')
-        
+
         if not self.base_url:
             raise ValueError("ollama requires 'base_url' in config (e.g., http://localhost:11434)")
+        self._validate_base_url(self.base_url)
         if not self.model:
             raise ValueError("ollama requires 'model' in config (e.g., llama3.2)")
         self.timeout = self.config.get('timeout', 30)
@@ -83,6 +84,18 @@ class OllamaDetector(PIIDetectorBase):
         
         logger.info(f"Ollama detector initialized (model: {self.model}, url: {self.base_url})")
     
+    @staticmethod
+    def _validate_base_url(url: str):
+        """Validate base_url to prevent SSRF attacks."""
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if parsed.scheme not in ('http', 'https'):
+            raise ValueError(f"base_url must use http or https scheme, got: {parsed.scheme}")
+        hostname = parsed.hostname or ''
+        blocked = ['169.254.169.254', 'metadata.google.internal', '169.254.170.2']
+        if hostname in blocked:
+            raise ValueError(f"base_url hostname is blocked for security: {hostname}")
+
     def get_name(self) -> str:
         """Return detector name."""
         return "ollama"

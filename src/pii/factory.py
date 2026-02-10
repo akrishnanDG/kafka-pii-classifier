@@ -1,6 +1,7 @@
 """Factory for creating PII detector providers."""
 
 import logging
+from threading import Lock
 from typing import Dict, Any, Optional, List
 from .base_detector import PIIDetectorBase
 from .pattern_detector import PatternDetector
@@ -37,6 +38,12 @@ try:
 except ImportError:
     LLM_AGENT_AVAILABLE = False
 
+try:
+    from .cloud_llm_detector import OpenAIDetector, AnthropicDetector, GeminiDetector
+    CLOUD_LLM_AVAILABLE = True
+except ImportError:
+    CLOUD_LLM_AVAILABLE = False
+
 logger = logging.getLogger(__name__)
 
 
@@ -44,7 +51,8 @@ class PIIDetectorFactory:
     """Factory for creating PII detector instances."""
     
     _providers: Dict[str, type] = {}
-    
+    _lock = Lock()
+
     @classmethod
     def register_provider(cls, name: str, provider_class: type):
         """
@@ -56,7 +64,8 @@ class PIIDetectorFactory:
         """
         if not issubclass(provider_class, PIIDetectorBase):
             raise ValueError(f"Provider class must implement PIIDetectorBase")
-        cls._providers[name.lower()] = provider_class
+        with cls._lock:
+            cls._providers[name.lower()] = provider_class
         logger.debug(f"Registered PII detector provider: {name}")
     
     @classmethod
@@ -75,15 +84,18 @@ class PIIDetectorFactory:
             ValueError: If provider is not registered
         """
         provider_name = provider_name.lower()
-        
-        if provider_name not in cls._providers:
-            available = ", ".join(cls._providers.keys())
+
+        with cls._lock:
+            providers_snapshot = dict(cls._providers)
+
+        if provider_name not in providers_snapshot:
+            available = ", ".join(providers_snapshot.keys())
             raise ValueError(
                 f"Unknown PII detector provider: {provider_name}. "
                 f"Available providers: {available}"
             )
         
-        provider_class = cls._providers[provider_name]
+        provider_class = providers_snapshot[provider_name]
         
         try:
             # Extract provider-specific config from providers_config or providers key
@@ -110,7 +122,8 @@ class PIIDetectorFactory:
         Returns:
             List of provider names
         """
-        return list(cls._providers.keys())
+        with cls._lock:
+            return list(cls._providers.keys())
 
 
 # Register built-in providers
@@ -134,4 +147,11 @@ if OLLAMA_AVAILABLE:
 
 if LLM_AGENT_AVAILABLE:
     PIIDetectorFactory.register_provider("llm_agent", SchemaAwareLLMDetector)
+
+if CLOUD_LLM_AVAILABLE:
+    PIIDetectorFactory.register_provider("openai", OpenAIDetector)
+    PIIDetectorFactory.register_provider("chatgpt", OpenAIDetector)
+    PIIDetectorFactory.register_provider("anthropic", AnthropicDetector)
+    PIIDetectorFactory.register_provider("claude", AnthropicDetector)
+    PIIDetectorFactory.register_provider("gemini", GeminiDetector)
 

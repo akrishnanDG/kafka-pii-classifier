@@ -1,6 +1,6 @@
-#!/usr/bin/env python3
-"""Test PII detection capabilities (Pattern and Presidio)."""
+"""Tests for PII detection capabilities (Pattern and Presidio)."""
 
+import pytest
 import sys
 from pathlib import Path
 
@@ -8,21 +8,17 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from src.pii.pattern_detector import PatternDetector
-from src.pii.presidio_detector import PresidioDetector
-from src.pii.detector import PIIDetector
 from src.pii.types import PIIType
-from src.config.config_loader import load_config
 
 
-def test_pattern_detector():
-    """Test Pattern detector capabilities."""
-    print("\n" + "="*60)
-    print("Pattern Detector Tests")
-    print("="*60)
-    
-    detector = PatternDetector()
-    
-    test_cases = [
+class TestPatternDetectorCapabilities:
+    """Test Pattern detector capabilities with various PII types."""
+
+    @pytest.fixture
+    def detector(self):
+        return PatternDetector()
+
+    @pytest.mark.parametrize("pii_type,value,should_detect", [
         ("SSN", "123-45-6789", True),
         ("EMAIL", "test@example.com", True),
         ("PHONE_NUMBER", "555-123-4567", True),
@@ -30,138 +26,79 @@ def test_pattern_detector():
         ("IP_ADDRESS", "192.168.1.1", True),
         ("EMAIL", "invalid-email", False),
         ("SSN", "123-45-678", False),
-    ]
-    
-    passed = 0
-    failed = 0
-    
-    for pii_type, value, should_detect in test_cases:
+    ])
+    def test_pattern_detection(self, detector, pii_type, value, should_detect):
+        """Test pattern detection for various PII types."""
         detections = detector.detect(value, f"test_{pii_type.lower()}")
         detected = any(d.pii_type == PIIType[pii_type] for d in detections)
-        
-        if detected == should_detect:
-            print(f"✅ {pii_type}: '{value}' - {'Detected' if detected else 'Not detected'} (expected)")
-            passed += 1
-        else:
-            print(f"❌ {pii_type}: '{value}' - {'Detected' if detected else 'Not detected'} (unexpected)")
-            failed += 1
-    
-    print(f"\nPattern Detector: {passed} passed, {failed} failed")
-    return failed == 0
+        assert detected == should_detect, (
+            f"{pii_type}: '{value}' - expected {'detected' if should_detect else 'not detected'}"
+        )
 
 
-def test_presidio_detector():
+class TestPresidioDetector:
     """Test Presidio detector capabilities."""
-    print("\n" + "="*60)
-    print("Presidio Detector Tests")
-    print("="*60)
-    
-    try:
-        detector = PresidioDetector()
-        
-        if not detector.is_available():
-            print("⚠️  Presidio not available (not installed or initialization failed)")
-            print("   Install with: pip install presidio-analyzer && python -m spacy download en_core_web_lg")
-            return True  # Not a failure, just not available
-        
-        test_cases = [
-            ("John Smith", "NAME"),
-            ("test@example.com", "EMAIL"),
-            ("555-123-4567", "PHONE_NUMBER"),
-        ]
-        
-        passed = 0
-        failed = 0
-        
-        for value, expected_type in test_cases:
-            detections = detector.detect(value, "test_field")
-            detected = any(d.pii_type.value == expected_type for d in detections)
-            
-            if detected:
-                print(f"✅ '{value}' - Detected as {expected_type}")
-                passed += 1
-            else:
-                print(f"❌ '{value}' - Not detected as {expected_type}")
-                failed += 1
-        
-        print(f"\nPresidio Detector: {passed} passed, {failed} failed")
-        return failed == 0
-        
-    except Exception as e:
-        print(f"⚠️  Presidio test error: {e}")
-        return True  # Not a failure if Presidio isn't available
+
+    def test_presidio_import(self):
+        """Test that Presidio detector can be imported."""
+        try:
+            from src.pii.presidio_detector import PresidioDetector
+            detector = PresidioDetector()
+            if not detector.is_available():
+                pytest.skip("Presidio not available (not installed)")
+        except ImportError:
+            pytest.skip("Presidio not installed")
+
+    @pytest.mark.parametrize("value,expected_type", [
+        ("John Smith", "NAME"),
+        ("test@example.com", "EMAIL"),
+        ("555-123-4567", "PHONE_NUMBER"),
+    ])
+    def test_presidio_detection(self, value, expected_type):
+        """Test Presidio detection for various PII types."""
+        try:
+            from src.pii.presidio_detector import PresidioDetector
+            detector = PresidioDetector()
+            if not detector.is_available():
+                pytest.skip("Presidio not available")
+        except ImportError:
+            pytest.skip("Presidio not installed")
+
+        detections = detector.detect(value, "test_field")
+        detected = any(d.pii_type.value == expected_type for d in detections)
+        assert detected, f"'{value}' not detected as {expected_type}"
 
 
-def test_combined_detector():
-    """Test combined Pattern + Presidio detector."""
-    print("\n" + "="*60)
-    print("Combined Detector Tests")
-    print("="*60)
-    
-    try:
-        config_path = Path('config/config.yaml')
-        if not config_path.exists():
-            config_path = Path('config/config.test.yaml')
-        
-        config = load_config(config_path)
-        pii_config = config.get('pii_detection', {})
-        
+@pytest.mark.integration
+class TestCombinedDetector:
+    """Test combined Pattern + configured detector."""
+
+    def test_combined_detector_initialization(self):
+        """Test that PIIDetector can initialize with pattern provider."""
+        from src.pii.detector import PIIDetector
+
+        pii_config = {
+            'providers': ['pattern'],
+            'enabled_types': ['SSN', 'EMAIL', 'PHONE_NUMBER', 'CREDIT_CARD', 'IP_ADDRESS', 'NAME'],
+        }
         detector = PIIDetector(pii_config)
-        print(f"✅ Initialized {len(detector.detectors)} detector(s): {[d.get_name() for d in detector.detectors]}")
-        
-        test_cases = [
-            ("email", "test@example.com", "EMAIL"),
-            ("ssn", "123-45-6789", "SSN"),
-            ("phone", "555-123-4567", "PHONE_NUMBER"),
-        ]
-        
-        passed = 0
-        failed = 0
-        
-        for field_name, value, expected_type in test_cases:
-            detections = detector.detect_in_field(field_name, value)
-            detected = any(d.pii_type.value == expected_type for d in detections)
-            
-            if detected:
-                print(f"✅ Field '{field_name}' with value '{value}' - Detected {expected_type}")
-                passed += 1
-            else:
-                print(f"❌ Field '{field_name}' with value '{value}' - Not detected")
-                failed += 1
-        
-        print(f"\nCombined Detector: {passed} passed, {failed} failed")
-        return failed == 0
-        
-    except Exception as e:
-        print(f"❌ Combined detector test error: {e}")
-        return False
+        assert len(detector.detectors) >= 1
+        assert any(d.get_name() == 'pattern' for d in detector.detectors)
 
+    @pytest.mark.parametrize("field_name,value,expected_type", [
+        ("email", "test@example.com", "EMAIL"),
+        ("ssn", "123-45-6789", "SSN"),
+        ("phone", "555-123-4567", "PHONE_NUMBER"),
+    ])
+    def test_combined_detection(self, field_name, value, expected_type):
+        """Test combined detection for basic PII types."""
+        from src.pii.detector import PIIDetector
 
-def main():
-    """Run all PII detection tests."""
-    print("="*60)
-    print("PII Detection Tests")
-    print("="*60)
-    
-    pattern_ok = test_pattern_detector()
-    presidio_ok = test_presidio_detector()
-    combined_ok = test_combined_detector()
-    
-    print("\n" + "="*60)
-    print("Test Summary")
-    print("="*60)
-    print(f"Pattern Detector:  {'✅ PASS' if pattern_ok else '❌ FAIL'}")
-    print(f"Presidio Detector: {'✅ PASS' if presidio_ok else '❌ FAIL'}")
-    print(f"Combined Detector: {'✅ PASS' if combined_ok else '❌ FAIL'}")
-    
-    if pattern_ok and presidio_ok and combined_ok:
-        print("\n✅ All PII detection tests passed!")
-        return 0
-    else:
-        print("\n❌ Some tests failed")
-        return 1
-
-
-if __name__ == '__main__':
-    sys.exit(main())
-
+        pii_config = {
+            'providers': ['pattern'],
+            'enabled_types': ['SSN', 'EMAIL', 'PHONE_NUMBER', 'CREDIT_CARD', 'IP_ADDRESS', 'NAME'],
+        }
+        detector = PIIDetector(pii_config)
+        detections = detector.detect_in_field(field_name, value)
+        detected = any(d.pii_type.value == expected_type for d in detections)
+        assert detected, f"Field '{field_name}' with value '{value}' not detected as {expected_type}"
