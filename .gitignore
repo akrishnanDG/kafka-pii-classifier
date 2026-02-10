@@ -40,6 +40,7 @@ ENV/
 reports/
 logs/
 *.log
+schema_backups/
 .env
 .env.local
 

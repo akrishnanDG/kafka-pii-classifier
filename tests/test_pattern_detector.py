@@ -103,8 +103,9 @@ class TestPatternDetector:
         hint_conf = max([d.confidence for d in detections_with_hint if d.pii_type == PIIType.PHONE_NUMBER], default=0)
         no_hint_conf = max([d.confidence for d in detections_no_hint if d.pii_type == PIIType.PHONE_NUMBER], default=0)
         
-        # At minimum, both should detect
-        assert len(detections_with_hint) > 0 or len(detections_no_hint) > 0
+        # Both should detect phone number
+        assert len(detections_with_hint) > 0, "Expected detection with field name hint"
+        assert hint_conf >= no_hint_conf, "Hint should provide equal or higher confidence"
 
     def test_detector_name(self, detector):
         """Test detector returns correct name."""

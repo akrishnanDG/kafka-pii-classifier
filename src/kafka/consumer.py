@@ -40,9 +40,9 @@ class KafkaConsumerService:
         # Note: These are librdkafka-specific properties, not all may be supported
         # by all Kafka client versions. We'll try to set them but won't fail if unsupported.
         if self.config.get('fetch_min_bytes'):
-            consumer_config['fetch.min.bytes'] = str(self.config['fetch_min_bytes'])
+            consumer_config['fetch.min.bytes'] = int(self.config['fetch_min_bytes'])
         if self.config.get('fetch_max_wait_ms'):
-            consumer_config['fetch.wait.max.ms'] = str(self.config['fetch_max_wait_ms'])
+            consumer_config['fetch.wait.max.ms'] = int(self.config['fetch_max_wait_ms'])
         # Note: max.poll.records is not a librdkafka property, it's handled by the client library
         # We'll skip it to avoid errors
         

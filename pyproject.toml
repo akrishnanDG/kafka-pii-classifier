@@ -25,11 +25,14 @@ classifiers = [
 ]
 keywords = ["pii", "kafka", "data-classification", "privacy", "gdpr", "schema-registry"]
 dependencies = [
-    "click>=8.0.0",
-    "confluent-kafka>=2.0.0",
+    "click>=8.1.0",
+    "confluent-kafka>=2.3.0",
     "pyyaml>=6.0",
     "requests>=2.28.0",
     "tqdm>=4.64.0",
+    "python-dotenv>=1.0.0",
+    "flask>=2.3.0",
+    "waitress>=2.1.0",
 ]
 
 [project.optional-dependencies]
@@ -60,11 +63,11 @@ dev = [
 [project.scripts]
 pii-classifier = "src.main:main"
 
-[project.urls]
-Homepage = "https://github.com/your-username/pii-classifier"
-Documentation = "https://github.com/your-username/pii-classifier#readme"
-Repository = "https://github.com/your-username/pii-classifier"
-Issues = "https://github.com/your-username/pii-classifier/issues"
+# [project.urls]
+# Homepage = "https://github.com/your-org/pii-classifier"
+# Documentation = "https://github.com/your-org/pii-classifier#readme"
+# Repository = "https://github.com/your-org/pii-classifier"
+# Issues = "https://github.com/your-org/pii-classifier/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -79,6 +82,9 @@ include = '\.pyi?$'
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 addopts = "-v --tb=short"
+markers = [
+    "integration: marks tests as integration tests (require live Kafka/Schema Registry)",
+]
 
 [tool.mypy]
 python_version = "3.9"

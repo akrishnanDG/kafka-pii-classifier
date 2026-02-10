@@ -64,9 +64,10 @@ class PIIDetectionAgent:
         self.config = config or {}
         self.base_url = self.config.get('base_url')
         self.model = self.config.get('model')
-        
+
         if not self.base_url:
             raise ValueError("llm_agent requires 'base_url' in config (e.g., http://localhost:11434)")
+        self._validate_base_url(self.base_url)
         if not self.model:
             raise ValueError("llm_agent requires 'model' in config (e.g., llama3.2)")
         self.timeout = self.config.get('timeout', 60)
@@ -81,9 +82,22 @@ class PIIDetectionAgent:
         
         logger.info(f"PII Detection Agent initialized (model: {self.model})")
     
+    @staticmethod
+    def _validate_base_url(url: str):
+        """Validate base_url to prevent SSRF attacks."""
+        from urllib.parse import urlparse
+        parsed = urlparse(url)
+        if parsed.scheme not in ('http', 'https'):
+            raise ValueError(f"base_url must use http or https scheme, got: {parsed.scheme}")
+        hostname = parsed.hostname or ''
+        # Block cloud metadata endpoints and link-local addresses
+        blocked = ['169.254.169.254', 'metadata.google.internal', '169.254.170.2']
+        if hostname in blocked:
+            raise ValueError(f"base_url hostname is blocked for security: {hostname}")
+
     def get_name(self) -> str:
         return "llm_agent"
-    
+
     def is_available(self) -> bool:
         """Check if Ollama is available."""
         if self._available is not None:

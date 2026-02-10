@@ -60,7 +60,9 @@ def safe_json_parse(data: bytes) -> Optional[Dict[str, Any]]:
                 return None
         elif isinstance(data, str):
             return json.loads(data)
-        return data
+        elif isinstance(data, dict):
+            return data
+        return None
     except (json.JSONDecodeError, UnicodeDecodeError, TypeError):
         return None
 
@@ -81,6 +83,8 @@ def mask_pii(value: str, mask_char: str = "*", keep_last: int = 0) -> str:
         return mask_char * len(value) if value else ""
     
     masked_length = len(value) - keep_last
+    if keep_last == 0:
+        return mask_char * masked_length
     return mask_char * masked_length + value[-keep_last:]
 
 

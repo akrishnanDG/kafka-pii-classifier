@@ -1,5 +1,7 @@
 """Main entry point for the PII classification agent."""
 
+import re
+import signal
 import sys
 from pathlib import Path
 import click
@@ -13,14 +15,14 @@ from .__version__ import __version__
 logger = setup_logger()
 
 BANNER = r"""
-  ┌─────────────────────────────────────────────────────────────┐
-  │  ___  ___ ___    ___ _            _  __ _                   │
-  │ | _ \|_ _|_ _|  / __| |__ _ _____(_)/ _(_)___ _ _           │
-  │ |  _/ | | | |  | (__| / _` (_-<_-< |  _| / -_) '_|          │
-  │ |_|  |___|___|  \___|_\__,_/__/__/_|_| |_\___|_|            │
-  │                                                             │
-  │  Detect & classify PII in Kafka topics                      │
-  └─────────────────────────────────────────────────────────────┘
+  +---------------------------------------------------------+
+  |  ___  ___ ___    ___ _            _  __ _                 |
+  | | _ \|_ _|_ _|  / __| |__ _ _____(_)/ _(_)___ _ _         |
+  | |  _/ | | | |  | (__| / _` (_-<_-< |  _| / -_) '_|        |
+  | |_|  |___|___|  \___|_\__,_/__/__/_|_| |_\___|_|          |
+  |                                                           |
+  |  Detect & classify PII in Kafka topics                    |
+  +---------------------------------------------------------+
 """
 
 
@@ -93,8 +95,8 @@ def print_version(ctx, param, value):
 )
 @click.option(
     '--api-host',
-    default='0.0.0.0',
-    help='API server host (default: 0.0.0.0)'
+    default='127.0.0.1',
+    help='API server host (default: 127.0.0.1)'
 )
 @click.option(
     '--api-port',
@@ -136,6 +138,11 @@ def print_version(ctx, param, value):
     default=100,
     help='Commit offsets every N messages in streaming mode (default: 100)'
 )
+@click.option(
+    '--json-logs',
+    is_flag=True,
+    help='Use structured JSON log format (recommended for production)'
+)
 def main(
     config: Path,
     topics: tuple,
@@ -153,11 +160,12 @@ def main(
     streaming: bool,
     offset_reset: str,
     offset_storage: Optional[Path],
-    commit_interval: int
+    commit_interval: int,
+    json_logs: bool
 ):
     """
     PII Classification Agent - Automatically detect and classify PII in Kafka topics.
-    
+
     Can run in four modes:
     1. Batch classification mode (default) - Runs batch analysis once
     2. API server mode (--api-server) - Starts REST API for integration
@@ -167,11 +175,10 @@ def main(
     try:
         # Setup logging
         global logger
-        logger = setup_logger(log_level=log_level)
-        
-        import sys
+        logger = setup_logger(log_level=log_level, json_format=json_logs)
+
         sys.stdout.flush()
-        
+
         # Check if API server mode
         if api_server:
             print("\n" + "="*80, flush=True)
@@ -181,194 +188,140 @@ def main(
             print(f"API Server: http://{api_host}:{api_port}", flush=True)
             print(f"Log Level: {log_level}", flush=True)
             print("="*80 + "\n", flush=True)
-            
+
             logger.info("Starting PII Classification Agent in API server mode")
             logger.info(f"API will be available at http://{api_host}:{api_port}")
-            
+
             # Start API server
             from .integration.api import run_api_server
             run_api_server(
                 config_path=config,
                 host=api_host,
                 port=api_port,
-                debug=(log_level == 'DEBUG')
+                debug=False
             )
             return
-        
+
         # Batch classification mode (default)
         click.echo(click.style(BANNER, fg='cyan'))
         click.echo(f"  Version: {__version__}")
         click.echo(f"  Config:  {config}")
         click.echo(f"  Mode:    {'Dry Run' if dry_run else 'Analysis'}")
         click.echo("")
-        
+
         logger.info("Starting PII Classification Agent")
         logger.info(f"Configuration file: {config}")
         sys.stdout.flush()
-        
+
         # Load configuration
         print("Loading configuration...", flush=True)
         try:
             config_dict = load_config(config)
-            print(f"✅ Configuration loaded successfully", flush=True)
+            print("Configuration loaded successfully", flush=True)
         except ConfigurationError as e:
-            print(f"❌ Configuration error: {e}", flush=True)
+            print(f"Configuration error: {e}", flush=True)
             logger.error(f"Configuration error: {e}")
             sys.exit(1)
-        
-        # Override config with CLI arguments
-        topics_arg = topics if topics else None
-        
-        # If --all-topics flag is set, clear topics list
+
+        # Save CLI topics for later override
+        cli_topics = list(topics) if topics else None
+
+        # If --all-topics flag is set, clear topics list in config
         if all_topics:
             config_dict['topics'] = []
             logger.info("--all-topics flag set: will analyze all topics in cluster")
-        
-        if sample_percentage:
-            config_dict['sampling']['sample_percentage'] = sample_percentage
-        
+
+        if sample_percentage is not None:
+            config_dict.setdefault('sampling', {})['sample_percentage'] = sample_percentage
+
         if enable_tagging:
-            config_dict['tagging']['enabled'] = True
-        
+            config_dict.setdefault('tagging', {})['enabled'] = True
+
         if dry_run:
-            config_dict['tagging']['enabled'] = False
+            config_dict.setdefault('tagging', {})['enabled'] = False
             logger.info("Running in DRY-RUN mode (no changes will be made)")
-        
+
         if output:
-            config_dict['reporting']['output_directory'] = str(output)
-        
+            config_dict.setdefault('reporting', {})['output_directory'] = str(output)
+
         # Initialize and run the agent
         print("Initializing agent...", flush=True)
         from .agent import PIIClassificationAgent
-        
+
         agent = PIIClassificationAgent(config_dict)
-        print("✅ Agent initialized", flush=True)
-        
-        # Get topics to analyze
-        topics = config_dict.get('topics', [])
-        
-        # If topics list is empty or --all-topics flag, analyze all topics
-        if not topics or all_topics:
-            print("Connecting to Kafka to discover topics...", flush=True)
-            logger.info("Analyzing all topics in cluster")
-            # Connect to get topic list (agent will connect, but we need it here too)
-            agent.kafka_consumer.connect()
-            print("✅ Connected to Kafka", flush=True)
-            print("Discovering topics...", flush=True)
-            all_topics_list = agent.kafka_consumer.list_topics()
-            print(f"✅ Found {len(all_topics_list)} topics in cluster", flush=True)
-            
-            # Get exclude patterns from config
-            topics_config = config_dict.get('topics', {})
-            if isinstance(topics_config, dict):
-                exclude_patterns = topics_config.get('exclude_patterns', [])
-            else:
-                exclude_patterns = []
-            
-            # Default exclusions if not specified
-            if not exclude_patterns:
-                exclude_patterns = [
-                    '_confluent',
-                    '__consumer_offsets',
-                    '__transaction_state',
-                ]
-            
-            # Filter out system topics
-            import re
-            filtered_topics = []
-            for topic in all_topics_list:
-                exclude = False
-                for pattern in exclude_patterns:
-                    # Try regex match first, then simple substring
-                    try:
-                        if re.search(pattern, topic):
-                            exclude = True
-                            break
-                    except re.error:
-                        # If pattern is not valid regex, use substring
-                        if pattern in topic:
-                            exclude = True
-                            break
-                if not exclude:
-                    filtered_topics.append(topic)
-            
-            topics = filtered_topics
-            print(f"✅ {len(topics)} topics to analyze (excluded {len(all_topics_list) - len(topics)} system topics)", flush=True)
-            logger.info(
-                f"Found {len(topics)} topics to analyze "
-                f"(excluded {len(all_topics_list) - len(topics)} system topics)"
-            )
-        
-        # Override with CLI topics if provided
-        if topics_arg:
-            topics = list(topics_arg)
-            logger.info(f"Using topics from command line: {topics}")
-        
-        if not topics:
+        print("Agent initialized", flush=True)
+
+        # Determine topics to analyze
+        target_topics = _resolve_topics(config_dict, cli_topics, all_topics, agent)
+
+        if not target_topics:
             logger.error("No topics to analyze")
             sys.exit(1)
-        
+
         print(f"\n{'='*80}", flush=True)
         print(f"STARTING ANALYSIS", flush=True)
         print(f"{'='*80}", flush=True)
-        print(f"Topics to analyze: {len(topics)}", flush=True)
-        if len(topics) <= 20:
-            print(f"Topics: {', '.join(topics)}", flush=True)
+        print(f"Topics to analyze: {len(target_topics)}", flush=True)
+        if len(target_topics) <= 20:
+            print(f"Topics: {', '.join(target_topics)}", flush=True)
         else:
-            print(f"First 20 topics: {', '.join(topics[:20])}... (+{len(topics) - 20} more)", flush=True)
+            print(f"First 20 topics: {', '.join(target_topics[:20])}... (+{len(target_topics) - 20} more)", flush=True)
         print(f"{'='*80}\n", flush=True)
-        
-        logger.info(f"Will analyze {len(topics)} topic(s)")
-        
+
+        logger.info(f"Will analyze {len(target_topics)} topic(s)")
+
         # Check if streaming mode
         if streaming:
             print("\n" + "="*80, flush=True)
             print("PII CLASSIFICATION AGENT - STREAMING MODE", flush=True)
             print("="*80, flush=True)
             print(f"Configuration: {config}", flush=True)
-            print(f"Topics: {topics if topics else 'All topics'}", flush=True)
+            print(f"Topics: {target_topics if target_topics else 'All topics'}", flush=True)
             print(f"Offset Reset: {offset_reset}", flush=True)
             print(f"Log Level: {log_level}", flush=True)
             print("="*80 + "\n", flush=True)
-            
+
             logger.info("Starting PII Classification Agent in streaming mode")
-            
-            # Create agent
-            agent = PIIClassificationAgent(config_dict)
-            
-            # Start streaming
+
+            # Start streaming (reuse existing agent, don't create a second one)
             streaming_consumer = agent.run_streaming(
-                topics=list(topics) if topics else None,
+                topics=target_topics,
                 offset_reset=offset_reset,
                 offset_storage_path=offset_storage,
                 commit_interval=commit_interval,
                 enable_tagging=enable_tagging
             )
-            
+
+            # Register SIGTERM handler for graceful shutdown
+            def _sigterm_handler(signum, frame):
+                print("\nReceived SIGTERM, shutting down...", flush=True)
+                streaming_consumer.stop()
+
+            signal.signal(signal.SIGTERM, _sigterm_handler)
+
             try:
                 # Start streaming (blocks until stopped)
                 streaming_consumer.start()
             except KeyboardInterrupt:
-                print("\n🛑 Stopping streaming consumer...", flush=True)
+                print("\nStopping streaming consumer...", flush=True)
                 streaming_consumer.stop()
-                streaming_consumer.disconnect()
-                print("✅ Streaming stopped gracefully", flush=True)
-            
+                print("Streaming stopped gracefully", flush=True)
+
             return
-        
+
         # Check if continuous monitoring mode
         if monitor:
             print("\n" + "="*80)
             print("CONTINUOUS MONITORING MODE")
             print("="*80)
             print(f"Monitoring interval: {monitor_interval} seconds ({monitor_interval/60:.1f} minutes)")
-            print(f"Topics to monitor: {len(topics)}")
+            print(f"Topics to monitor: {len(target_topics)}")
             print(f"Press Ctrl+C to stop monitoring\n")
             print("="*80 + "\n", flush=True)
-            
+
             import time
             from datetime import datetime, timedelta
-            
+
             iteration = 0
             try:
                 while True:
@@ -377,31 +330,32 @@ def main(
                     print(f"MONITORING CYCLE #{iteration}")
                     print(f"Time: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
                     print(f"{'='*80}\n", flush=True)
-                    
-                    # Run analysis
+
+                    # Create a fresh agent each cycle to avoid stale connections
+                    cycle_agent = PIIClassificationAgent(config_dict)
                     print("Starting analysis...\n", flush=True)
-                    results = agent.run(topics)
+                    results = cycle_agent.run(target_topics)
                     print("\n", flush=True)
-                    
+
                     # Print summary
                     topics_with_pii = [r for r in results['topics_analyzed'] if r.get('pii_fields_found', 0) > 0]
                     if topics_with_pii:
-                        print(f"\n⚠️  Found PII in {len(topics_with_pii)} topic(s):")
+                        print(f"\nFound PII in {len(topics_with_pii)} topic(s):")
                         for topic_result in topics_with_pii:
-                            topic = topic_result.get('topic', 'Unknown')
+                            topic_name = topic_result.get('topic', 'Unknown')
                             pii_fields = topic_result.get('pii_fields_found', 0)
-                            print(f"  • {topic}: {pii_fields} PII field(s)")
+                            print(f"  - {topic_name}: {pii_fields} PII field(s)")
                     else:
-                        print("✅ No PII detected in this cycle")
-                    
+                        print("No PII detected in this cycle")
+
                     # Wait for next cycle
                     next_cycle_time = datetime.now() + timedelta(seconds=monitor_interval)
-                    print(f"\n⏳ Waiting {monitor_interval} seconds until next cycle...")
+                    print(f"\nWaiting {monitor_interval} seconds until next cycle...")
                     print(f"   Next cycle at: {next_cycle_time.strftime('%Y-%m-%d %H:%M:%S')}")
                     print("   (Press Ctrl+C to stop)\n", flush=True)
-                    
+
                     time.sleep(monitor_interval)
-                    
+
             except KeyboardInterrupt:
                 print("\n\n" + "="*80)
                 print("MONITORING STOPPED")
@@ -410,141 +364,194 @@ def main(
                 print("="*80 + "\n", flush=True)
                 logger.info(f"Continuous monitoring stopped after {iteration} cycles")
                 return
-        
+
         # Single run mode (default)
         print("Starting analysis...\n", flush=True)
-        results = agent.run(topics)
+        results = agent.run(target_topics)
         print("\n", flush=True)
-        
+
         # Separate topics into categories
         topics_with_data = []
         topics_with_pii = []
         empty_topics = []
-        
+
         for topic_result in results['topics_analyzed']:
             samples = topic_result.get('samples', 0)
             pii_fields = topic_result.get('pii_fields_found', 0)
-            
+
             if pii_fields > 0:
                 topics_with_pii.append(topic_result)
             elif samples > 0:
                 topics_with_data.append(topic_result)
             else:
                 empty_topics.append(topic_result)
-        
+
         # Print summary with clear formatting
         print("\n" + "="*80)
         print("ANALYSIS SUMMARY")
         print("="*80)
         print(f"Topics Analyzed: {len(results['topics_analyzed'])}")
-        print(f"  • Topics with PII: {len(topics_with_pii)}")
-        print(f"  • Topics with data (no PII): {len(topics_with_data)}")
-        print(f"  • Empty topics: {len(empty_topics)}")
+        print(f"  - Topics with PII: {len(topics_with_pii)}")
+        print(f"  - Topics with data (no PII): {len(topics_with_data)}")
+        print(f"  - Empty topics: {len(empty_topics)}")
         print(f"\nTotal Fields Classified: {results['total_fields_classified']}")
         print(f"Total PII Fields Found: {results['total_pii_fields']}")
-        
+
         if results['errors']:
-            print(f"\n⚠️  Errors: {len(results['errors'])}")
+            print(f"\nErrors: {len(results['errors'])}")
             for error in results['errors']:
                 print(f"  - {error}")
-        
+
         # Show topics with PII prominently
         if topics_with_pii:
             print("\n" + "="*80)
             print("TOPICS WITH PII DETECTED")
             print("="*80)
-            
+
             for topic_result in topics_with_pii:
-                topic = topic_result.get('topic', 'Unknown')
+                topic_name = topic_result.get('topic', 'Unknown')
                 samples = topic_result.get('samples', 0)
                 pii_fields = topic_result.get('pii_fields_found', 0)
                 schemaless = topic_result.get('schemaless', False)
-                
-                print(f"\n📊 Topic: {topic}")
+
+                print(f"\nTopic: {topic_name}")
                 print(f"   Samples: {samples} | PII Fields: {pii_fields} | Schemaless: {'Yes' if schemaless else 'No'}")
-                
+
                 classifications = topic_result.get('classifications', {})
                 if classifications:
                     print(f"   Fields with PII:")
-                    for field_path, cls in list(classifications.items())[:10]:  # Show first 10
-                        tags = ', '.join(cls.get('tags', [])[:3])  # Show first 3 tags
+                    for field_path, cls in list(classifications.items())[:10]:
+                        tags = ', '.join(cls.get('tags', [])[:3])
                         conf = cls.get('confidence', 0)
                         rate = cls.get('detection_rate', 0)
-                        sample_values = cls.get('sample_values', [])
-                        
-                        # Format sample values for display
-                        if sample_values:
-                            sample_str = ', '.join([f"'{v[:30]}{'...' if len(v) > 30 else ''}'" for v in sample_values[:3]])
-                            if len(sample_values) > 3:
-                                sample_str += f" (+{len(sample_values) - 3} more)"
-                            print(f"     • {field_path}: {tags} (conf: {conf:.2f}, rate: {rate:.1%})")
-                            print(f"       Samples: {sample_str}")
-                        else:
-                            print(f"     • {field_path}: {tags} (conf: {conf:.2f}, rate: {rate:.1%})")
+                        print(f"     - {field_path}: {tags} (conf: {conf:.2f}, rate: {rate:.1%})")
                     if len(classifications) > 10:
                         print(f"     ... and {len(classifications) - 10} more fields")
-        
+
         # Show topics with data but no PII (brief)
         if topics_with_data:
             print("\n" + "-"*80)
             print(f"TOPICS WITH DATA (NO PII) - {len(topics_with_data)} topics")
             print("-"*80)
-            for topic_result in topics_with_data[:20]:  # Show first 20
-                topic = topic_result.get('topic', 'Unknown')
+            for topic_result in topics_with_data[:20]:
+                topic_name = topic_result.get('topic', 'Unknown')
                 samples = topic_result.get('samples', 0)
-                print(f"  • {topic}: {samples} samples")
+                print(f"  - {topic_name}: {samples} samples")
             if len(topics_with_data) > 20:
                 print(f"  ... and {len(topics_with_data) - 20} more topics")
-        
+
         # Show empty topics (collapsed)
         if empty_topics:
             print("\n" + "-"*80)
             print(f"EMPTY TOPICS - {len(empty_topics)} topics")
             print("-"*80)
-            # Group by first letter or show as compact list
             if len(empty_topics) <= 50:
-                # Show all if not too many
                 for i, topic_result in enumerate(empty_topics):
-                    topic = topic_result.get('topic', 'Unknown')
-                    print(f"  {topic}", end="")
+                    topic_name = topic_result.get('topic', 'Unknown')
+                    print(f"  {topic_name}", end="")
                     if (i + 1) % 5 == 0:
-                        print()  # New line every 5 topics
+                        print()
                     elif i < len(empty_topics) - 1:
                         print(" | ", end="")
                 if len(empty_topics) % 5 != 0:
-                    print()  # Final newline
+                    print()
             else:
-                # Show first 30 and count
                 for i, topic_result in enumerate(empty_topics[:30]):
-                    topic = topic_result.get('topic', 'Unknown')
-                    print(f"  {topic}", end="")
+                    topic_name = topic_result.get('topic', 'Unknown')
+                    print(f"  {topic_name}", end="")
                     if (i + 1) % 5 == 0:
                         print()
                     elif i < 29:
                         print(" | ", end="")
                 print(f"\n  ... and {len(empty_topics) - 30} more empty topics")
-        
+
         # Show report files
         if results.get('report_files'):
             print("\n" + "="*80)
             print("REPORTS GENERATED")
             print("="*80)
             for report_file in results['report_files']:
-                print(f"  ✅ {report_file}")
-        
+                print(f"  {report_file}")
+
         print("\n" + "="*80)
-        print("✅ ANALYSIS COMPLETE!")
+        print("ANALYSIS COMPLETE!")
         print("="*80 + "\n")
-        
+
     except KeyboardInterrupt:
         logger.info("Interrupted by user")
         sys.exit(0)
+    except SystemExit:
+        raise
     except Exception as e:
         logger.error(f"Unexpected error: {e}", exc_info=True)
         sys.exit(1)
 
 
+def _resolve_topics(config_dict, cli_topics, all_topics_flag, agent):
+    """Resolve which topics to analyze from config, CLI args, and discovery.
+
+    Returns:
+        List of topic names to analyze.
+    """
+    # CLI topics take highest priority
+    if cli_topics:
+        logger.info(f"Using topics from command line: {cli_topics}")
+        return cli_topics
+
+    # Get topics from config (can be a list or a dict with exclude_patterns)
+    topics_config = config_dict.get('topics', [])
+
+    if isinstance(topics_config, list) and topics_config and not all_topics_flag:
+        # Explicit topic list in config
+        return topics_config
+
+    # Discover all topics from Kafka
+    print("Connecting to Kafka to discover topics...", flush=True)
+    logger.info("Analyzing all topics in cluster")
+    agent.kafka_consumer.connect()
+    print("Connected to Kafka", flush=True)
+    print("Discovering topics...", flush=True)
+    discovered_topics = agent.kafka_consumer.list_topics()
+    print(f"Found {len(discovered_topics)} topics in cluster", flush=True)
+
+    # Get exclude patterns
+    if isinstance(topics_config, dict):
+        exclude_patterns = topics_config.get('exclude_patterns', [])
+    else:
+        exclude_patterns = []
+
+    # Default exclusions if not specified
+    if not exclude_patterns:
+        exclude_patterns = [
+            '^_',
+            '__consumer_offsets',
+            '__transaction_state',
+        ]
+
+    # Filter out system topics
+    filtered_topics = []
+    for topic_name in discovered_topics:
+        exclude = False
+        for pattern in exclude_patterns:
+            try:
+                if re.search(pattern, topic_name):
+                    exclude = True
+                    break
+            except re.error:
+                if pattern in topic_name:
+                    exclude = True
+                    break
+        if not exclude:
+            filtered_topics.append(topic_name)
+
+    print(f"{len(filtered_topics)} topics to analyze (excluded {len(discovered_topics) - len(filtered_topics)} system topics)", flush=True)
+    logger.info(
+        f"Found {len(filtered_topics)} topics to analyze "
+        f"(excluded {len(discovered_topics) - len(filtered_topics)} system topics)"
+    )
+    return filtered_topics
+
+
 # Entry point for CLI
 if __name__ == '__main__':
     main()
-

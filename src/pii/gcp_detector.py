@@ -71,12 +71,14 @@ class GCPDLPDetector(PIIDetectorBase):
         
         # Initialize DLP client
         try:
-            client_kwargs = {}
             if 'credentials_path' in self.config:
-                import os
-                os.environ['GOOGLE_APPLICATION_CREDENTIALS'] = self.config['credentials_path']
-            
-            self.client = dlp_v2.DlpServiceClient()
+                from google.oauth2 import service_account
+                credentials = service_account.Credentials.from_service_account_file(
+                    self.config['credentials_path']
+                )
+                self.client = dlp_v2.DlpServiceClient(credentials=credentials)
+            else:
+                self.client = dlp_v2.DlpServiceClient()
             logger.info(f"GCP DLP detector initialized (project: {self.project_id})")
         except Exception as e:
             logger.error(f"Failed to initialize GCP DLP: {e}")
