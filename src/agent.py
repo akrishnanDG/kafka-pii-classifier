@@ -726,14 +726,22 @@ class PIIClassificationAgent:
         topic: str,
         is_schemaless: bool
     ) -> Dict[str, List[List[Any]]]:
-        """Analyze samples for PII - with schema-level LLM detection and parallel processing."""
+        """Analyze samples for PII.
+
+        Pipeline:
+        1. Parse all samples into field dicts
+        2. Run PATTERN detection on all samples (fast, no API calls)
+        3. Identify fields NOT caught by pattern (uncovered fields)
+        4. Send ONLY uncovered fields to LLM (1 schema-level call)
+        5. Merge results — each field covered by exactly one detector
+        """
         from concurrent.futures import ThreadPoolExecutor, as_completed
         from .utils.avro_deserializer import deserialize_message
 
         field_detections = {}
-        field_detections_lock = Lock()  # Thread-safe access to field_detections
+        field_detections_lock = Lock()
 
-        # Pre-get schema info to avoid repeated lookups (speed optimization)
+        # Pre-get schema info
         schema_type = None
         if not is_schemaless:
             subject = f"{topic}-value"
@@ -741,7 +749,7 @@ class PIIClassificationAgent:
             if schema_info:
                 schema_type = schema_info.get('schema_type', 'AVRO')
 
-        # First, parse all samples to get field names and data for schema-level detection
+        # Step 1: Parse all samples
         parsed_samples = []
         all_field_names = set()
 
@@ -769,60 +777,32 @@ class PIIClassificationAgent:
                 parsed_samples.append(fields)
                 all_field_names.update(fields.keys())
 
-        # SCHEMA-LEVEL DETECTION: If LLM agent is configured, use it efficiently (1 call per topic)
-        if self.pii_detector.has_schema_detectors() and parsed_samples:
-            logger.info(f"Topic {topic}: Running schema-level LLM analysis on {len(all_field_names)} fields...")
+        if not parsed_samples:
+            return field_detections
 
-            # Call LLM agent once with all fields and samples
-            schema_detections = self.pii_detector.detect_in_schema(
-                list(all_field_names),
-                parsed_samples[:10]  # Use up to 10 samples for context
-            )
-
-            # Add schema-level detections to field_detections
-            # These are high-confidence detections that apply to all samples
-            for field_path, detections in schema_detections.items():
-                if field_path not in field_detections:
-                    field_detections[field_path] = []
-                # Add detection for each sample that has this field
-                for sample in parsed_samples:
-                    if field_path in sample:
-                        field_detections[field_path].append(detections)
-
-            logger.info(f"Topic {topic}: Schema-level analysis found {len(schema_detections)} PII fields")
-
-        # PER-FIELD DETECTION: Run pattern detector and other per-field detectors
+        # Step 2: Run PATTERN detection first (fast, no API calls)
         def analyze_single_sample(sample_fields: Dict[str, Any]) -> Dict[str, List[Any]]:
-            """Analyze a single sample with per-field detectors."""
+            """Analyze a single sample with per-field (non-LLM) detectors."""
             sample_detections = {}
-
             for field_path, field_value in sample_fields.items():
                 detections = self.pii_detector.detect_in_field(field_path, field_value)
                 if detections:
                     sample_detections[field_path] = detections
-
             return sample_detections
 
-        # Process samples in parallel for per-field detection
         max_workers = min(len(parsed_samples), 20)
         if len(parsed_samples) > 10:
-            _debug_print(f"[DEBUG] Topic {topic}: Running per-field analysis on {len(parsed_samples)} samples")
+            _debug_print(f"[DEBUG] Topic {topic}: Running pattern analysis on {len(parsed_samples)} samples")
 
         with ThreadPoolExecutor(max_workers=max_workers) as executor:
             futures = {
                 executor.submit(analyze_single_sample, sample): i
                 for i, sample in enumerate(parsed_samples)
             }
-
-            completed = 0
             for future in as_completed(futures):
                 sample_idx = futures[future]
-                completed += 1
-                if completed % 25 == 0 and len(parsed_samples) > 25:
-                    _debug_print(f"[DEBUG] Topic {topic}: Analyzed {completed}/{len(parsed_samples)} samples")
                 try:
                     sample_detections = future.result()
-                    # Merge into main field_detections (thread-safe)
                     with field_detections_lock:
                         for field_path, detections in sample_detections.items():
                             if field_path not in field_detections:
@@ -831,8 +811,53 @@ class PIIClassificationAgent:
                 except Exception as e:
                     logger.error(f"Error analyzing sample {sample_idx}: {e}")
 
+        # Step 3: Identify fields NOT caught by pattern detection
+        pattern_covered = set(field_detections.keys())
+        uncovered_fields = [f for f in all_field_names if f not in pattern_covered]
+
         if len(parsed_samples) > 10:
-            _debug_print(f"[DEBUG] Topic {topic}: Completed PII analysis for {len(parsed_samples)} samples")
+            _debug_print(
+                f"[DEBUG] Topic {topic}: Pattern covered {len(pattern_covered)} fields, "
+                f"{len(uncovered_fields)} uncovered"
+            )
+
+        # Step 4: Send ONLY uncovered fields to LLM (if available)
+        if self.pii_detector.has_schema_detectors() and uncovered_fields:
+            logger.info(
+                f"Topic {topic}: Pattern found {len(pattern_covered)} PII fields. "
+                f"Sending {len(uncovered_fields)} uncovered fields to LLM..."
+            )
+
+            # Build sample data for only uncovered fields
+            uncovered_samples = []
+            for sample in parsed_samples[:10]:
+                filtered = {k: v for k, v in sample.items() if k in uncovered_fields}
+                if filtered:
+                    uncovered_samples.append(filtered)
+
+            schema_detections = self.pii_detector.detect_in_schema(
+                uncovered_fields,
+                uncovered_samples if uncovered_samples else None
+            )
+
+            # Add LLM detections for uncovered fields
+            for field_path, detections in schema_detections.items():
+                if field_path not in field_detections:
+                    field_detections[field_path] = []
+                for sample in parsed_samples:
+                    if field_path in sample:
+                        field_detections[field_path].append(detections)
+
+            logger.info(
+                f"Topic {topic}: LLM found {len(schema_detections)} additional PII fields "
+                f"(total: {len(field_detections)})"
+            )
+        elif self.pii_detector.has_schema_detectors() and not uncovered_fields:
+            logger.info(
+                f"Topic {topic}: Pattern covered all {len(pattern_covered)} fields, "
+                f"LLM call skipped"
+            )
+
         return field_detections
 
     def _parse_time_window(self, time_window_str: str) -> float:

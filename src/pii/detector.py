@@ -259,7 +259,12 @@ class PIIDetector:
                     logger.debug(f"Filtering out ADDRESS false positive: {field_name}={value} (license plate, not address)")
                     continue
             
-            # Rule 0c: Filter DATE_OF_BIRTH false positives for ID fields
+            # Rule 0c: Filter DATE_OF_BIRTH false positives for time/timestamp fields
+            if det.pii_type == PIIType.DATE_OF_BIRTH and has_time_context:
+                logger.debug(f"Filtering out DATE_OF_BIRTH false positive: {field_name}={value} (time field)")
+                continue
+
+            # Rule 0d: Filter DATE_OF_BIRTH false positives for ID fields
             # Numeric IDs (like vehicle_id: 6538) are often misclassified as dates by Presidio
             if det.pii_type == PIIType.DATE_OF_BIRTH and has_id_context:
                 value_str = str(value).strip()
