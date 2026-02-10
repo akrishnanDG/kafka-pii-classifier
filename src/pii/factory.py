@@ -39,7 +39,7 @@ except ImportError:
     LLM_AGENT_AVAILABLE = False
 
 try:
-    from .cloud_llm_detector import OpenAIDetector, AnthropicDetector, GeminiDetector
+    from .cloud_llm_detector import OpenAIDetector, AnthropicDetector, GeminiDetector, VertexAIDetector
     CLOUD_LLM_AVAILABLE = True
 except ImportError:
     CLOUD_LLM_AVAILABLE = False
@@ -154,4 +154,5 @@ if CLOUD_LLM_AVAILABLE:
     PIIDetectorFactory.register_provider("anthropic", AnthropicDetector)
     PIIDetectorFactory.register_provider("claude", AnthropicDetector)
     PIIDetectorFactory.register_provider("gemini", GeminiDetector)
+    PIIDetectorFactory.register_provider("vertex_ai", VertexAIDetector)
 

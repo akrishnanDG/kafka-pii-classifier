@@ -444,7 +444,7 @@ class AnthropicDetector(CloudLLMDetector):
 # ======================================================================
 
 class GeminiDetector(CloudLLMDetector):
-    """PII detector using Google Gemini API."""
+    """PII detector using Google Gemini API (API key auth)."""
 
     PROVIDER_NAME = "gemini"
     DEFAULT_ENDPOINT = "generativelanguage.googleapis.com"
@@ -475,6 +475,169 @@ class GeminiDetector(CloudLLMDetector):
             },
             timeout=self.timeout,
         )
+        response.raise_for_status()
+        candidates = response.json().get('candidates', [])
+        if candidates:
+            parts = candidates[0].get('content', {}).get('parts', [])
+            return ''.join(p.get('text', '') for p in parts)
+        return ''
+
+
+# ======================================================================
+# Google Vertex AI (gcloud auth — no API key needed)
+# ======================================================================
+
+class VertexAIDetector(CloudLLMDetector):
+    """PII detector using Vertex AI with gcloud OAuth authentication.
+
+    Uses `gcloud auth print-access-token` for auth — no API key required.
+    Just run `gcloud auth login` or `gcloud auth application-default login`.
+
+    Config:
+        project_id: GCP project ID (or number) — required
+        location: GCP region (default: us-central1)
+        model: Model name (default: gemini-2.0-flash-001)
+    """
+
+    PROVIDER_NAME = "vertex_ai"
+    DEFAULT_ENDPOINT = "aiplatform.googleapis.com"
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None):
+        config = config or {}
+        config.setdefault('model', 'gemini-2.0-flash-001')
+
+        self.project_id = config.get('project_id')
+        self.location = config.get('location', 'us-central1')
+        self._token_cache: Optional[str] = None
+        self._token_expiry: float = 0
+
+        if not self.project_id:
+            import subprocess
+            try:
+                result = subprocess.run(
+                    ['gcloud', 'config', 'get-value', 'project'],
+                    capture_output=True, text=True, timeout=5
+                )
+                self.project_id = result.stdout.strip()
+            except Exception:
+                pass
+
+        if not self.project_id:
+            raise ValueError(
+                "vertex_ai requires 'project_id' in config or "
+                "a default project set via 'gcloud config set project PROJECT_ID'"
+            )
+
+        # Vertex AI uses OAuth — bypass the base class api_key requirement
+        # by setting it directly and skipping the parent validation
+        self.config = config
+        self.api_key = None  # Not used — OAuth instead
+        self.model = config.get('model')
+        self.timeout = config.get('timeout', 60)
+        self.temperature = config.get('temperature', 0.1)
+        self._available: Optional[bool] = None
+
+        # GDPR warning
+        if not config.get('data_privacy_acknowledged', False):
+            logger.warning(_GDPR_WARNING.format(
+                name=self.PROVIDER_NAME,
+                endpoint=f'{self.location}-{self.DEFAULT_ENDPOINT}',
+            ))
+
+        logger.info(
+            f"vertex_ai detector initialized "
+            f"(model: {self.model}, project: {self.project_id}, "
+            f"location: {self.location})"
+        )
+
+    def _get_access_token(self) -> str:
+        """Get OAuth access token from gcloud, with 50-minute cache."""
+        import time
+        now = time.monotonic()
+
+        # Return cached token if still valid (tokens last 60 min, refresh at 50)
+        if self._token_cache and now < self._token_expiry:
+            return self._token_cache
+
+        import subprocess
+        result = subprocess.run(
+            ['gcloud', 'auth', 'print-access-token'],
+            capture_output=True, text=True, timeout=10
+        )
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"Failed to get gcloud access token: {result.stderr.strip()}. "
+                f"Run 'gcloud auth login' first."
+            )
+
+        self._token_cache = result.stdout.strip()
+        self._token_expiry = now + 3000  # Cache for 50 minutes
+        return self._token_cache
+
+    def is_available(self) -> bool:
+        if self._available is not None:
+            return self._available
+        try:
+            self._get_access_token()
+            self._available = True
+        except Exception:
+            self._available = False
+        return self._available
+
+    def _call_api(self, prompt: str) -> str:
+        token = self._get_access_token()
+        endpoint = (
+            f'https://{self.location}-aiplatform.googleapis.com/v1/'
+            f'projects/{self.project_id}/locations/{self.location}/'
+            f'publishers/google/models/{self.model}:generateContent'
+        )
+        response = requests.post(
+            endpoint,
+            headers={
+                'Authorization': f'Bearer {token}',
+                'Content-Type': 'application/json',
+            },
+            json={
+                'contents': [
+                    {'role': 'user', 'parts': [{'text': prompt}]}
+                ],
+                'generationConfig': {
+                    'temperature': self.temperature,
+                    'maxOutputTokens': 500,
+                },
+                'systemInstruction': {
+                    'parts': [{'text': 'You are a PII detection expert. Respond only with JSON.'}]
+                },
+            },
+            timeout=self.timeout,
+        )
+
+        # If 401, clear token cache and retry once
+        if response.status_code == 401:
+            self._token_cache = None
+            self._token_expiry = 0
+            token = self._get_access_token()
+            response = requests.post(
+                endpoint,
+                headers={
+                    'Authorization': f'Bearer {token}',
+                    'Content-Type': 'application/json',
+                },
+                json={
+                    'contents': [
+                        {'role': 'user', 'parts': [{'text': prompt}]}
+                    ],
+                    'generationConfig': {
+                        'temperature': self.temperature,
+                        'maxOutputTokens': 500,
+                    },
+                    'systemInstruction': {
+                        'parts': [{'text': 'You are a PII detection expert. Respond only with JSON.'}]
+                    },
+                },
+                timeout=self.timeout,
+            )
+
         response.raise_for_status()
         candidates = response.json().get('candidates', [])
         if candidates:
